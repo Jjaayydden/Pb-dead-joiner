@@ -1,6 +1,6 @@
 
 -- Roblox Luau | Client-side executor
--- PRACTICAL BASKETBALL ULTIMATE V2
+-- PRACTICAL BASKETBALL ULTIMATE V3
 
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
@@ -17,10 +17,14 @@ local CHECK_INTERVAL = 5
 
 local running = false
 local hopping = false
+local closed = false
 
-pcall(function()
-    CoreGui:FindFirstChild("PBDeadJoiner"):Destroy()
-end)
+local oldGui = CoreGui:FindFirstChild("PBDeadJoiner")
+if oldGui then
+    oldGui:Destroy()
+end
+
+-- GUI
 
 local Gui = Instance.new("ScreenGui")
 Gui.Name = "PBDeadJoiner"
@@ -28,22 +32,36 @@ Gui.ResetOnSpawn = false
 Gui.Parent = CoreGui
 
 local Frame = Instance.new("Frame")
-Frame.Size = UDim2.fromOffset(340, 410)
-Frame.Position = UDim2.new(0.5, -170, 0.5, -205)
+Frame.Size = UDim2.fromOffset(380, 450)
+Frame.Position = UDim2.new(0.5, -190, 0.5, -225)
 Frame.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
 Frame.Parent = Gui
 
-Instance.new("UICorner", Frame).CornerRadius =
-    UDim.new(0, 12)
+Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 12)
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 45)
+Title.Size = UDim2.new(1, -45, 0, 45)
+Title.Position = UDim2.fromOffset(10, 0)
 Title.BackgroundTransparency = 1
 Title.Text = "PRACTICAL BASKETBALL"
 Title.TextColor3 = Color3.new(1, 1, 1)
 Title.TextSize = 17
 Title.Font = Enum.Font.GothamBold
 Title.Parent = Frame
+
+-- CLOSE BUTTON
+
+local Close = Instance.new("TextButton")
+Close.Size = UDim2.fromOffset(32, 32)
+Close.Position = UDim2.new(1, -38, 0, 6)
+Close.BackgroundColor3 = Color3.fromRGB(190, 55, 65)
+Close.Text = "X"
+Close.TextColor3 = Color3.new(1, 1, 1)
+Close.TextSize = 16
+Close.Font = Enum.Font.GothamBold
+Close.Parent = Frame
+
+Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 8)
 
 local Status = Instance.new("TextLabel")
 Status.Position = UDim2.fromOffset(5, 45)
@@ -52,9 +70,10 @@ Status.BackgroundTransparency = 1
 Status.Text = "Ready"
 Status.TextColor3 = Color3.fromRGB(100, 220, 140)
 Status.TextSize = 12
+Status.Font = Enum.Font.Gotham
 Status.Parent = Frame
 
--- TAB BAR
+-- TABS
 
 local TabBar = Instance.new("Frame")
 TabBar.Position = UDim2.fromOffset(10, 80)
@@ -81,7 +100,7 @@ local function createPage(name)
     Page.Parent = Frame
 
     local Layout = Instance.new("UIListLayout")
-    Layout.Padding = UDim.new(0, 10)
+    Layout.Padding = UDim.new(0, 9)
     Layout.SortOrder = Enum.SortOrder.LayoutOrder
     Layout.Parent = Page
 
@@ -103,16 +122,15 @@ end
 
 local function createTab(name)
     local Button = Instance.new("TextButton")
-    Button.Size = UDim2.new(0, 75, 1, 0)
+    Button.Size = UDim2.new(0, 65, 1, 0)
     Button.BackgroundColor3 = Color3.fromRGB(42, 44, 55)
     Button.Text = name
     Button.TextColor3 = Color3.new(1, 1, 1)
-    Button.TextSize = 12
+    Button.TextSize = 11
     Button.Font = Enum.Font.GothamBold
     Button.Parent = TabBar
 
-    Instance.new("UICorner", Button).CornerRadius =
-        UDim.new(0, 7)
+    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 7)
 
     Tabs[name] = Button
     Button.MouseButton1Click:Connect(function()
@@ -121,7 +139,7 @@ local function createTab(name)
 end
 
 for _, name in ipairs({
-    "Joiner", "1v1", "2v2", "3v3"
+    "Joiner", "1v1", "2v2", "3v3", "4v4"
 }) do
     createPage(name)
     createTab(name)
@@ -139,48 +157,77 @@ local function makeButton(pageName, label, callback)
     Button.Font = Enum.Font.GothamBold
     Button.Parent = Pages[pageName]
 
-    Instance.new("UICorner", Button).CornerRadius =
-        UDim.new(0, 8)
+    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 8)
 
     Button.MouseButton1Click:Connect(callback)
 end
 
--- COURT PROMPT JOINER
+-- COURT JOINER
 
 local function joinCourt(number)
-    local target = "COURT " .. number
+    local courts = workspace:FindFirstChild("Map")
+        and workspace.Map:FindFirstChild("Courts")
 
-    for _, object in ipairs(workspace:GetDescendants()) do
-        if object:IsA("ProximityPrompt")
-            and string.upper(object.ObjectText or "") == target then
+    if not courts then
+        Status.Text = "Court folder not found"
+        return
+    end
 
-            if typeof(fireproximityprompt) ~= "function" then
-                Status.Text = "Prompt support unavailable"
-                return
-            end
+    local court = courts:FindFirstChild("Court" .. number)
 
-            Status.Text = "Joining " .. target
+    if not court then
+        Status.Text = "Court " .. number .. " not found"
+        return
+    end
 
-            local success = pcall(function()
-                fireproximityprompt(object)
+    local spots = court:FindFirstChild("Spots")
+
+    if not spots then
+        Status.Text = "Court " .. number .. ": Spots missing"
+        return
+    end
+
+    if typeof(firetouchinterest) ~= "function" then
+        Status.Text = "Executor touch support unavailable"
+        return
+    end
+
+    local character = LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+
+    if not root then
+        Status.Text = "Character not loaded"
+        return
+    end
+
+    local found = 0
+    Status.Text = "Interacting with Court " .. number
+
+    for _, spot in ipairs(spots:GetDescendants()) do
+        if spot:IsA("BasePart") then
+            found += 1
+
+            pcall(function()
+                firetouchinterest(root, spot, 0)
+                task.wait(0.1)
+                firetouchinterest(root, spot, 1)
             end)
 
-            if not success then
-                Status.Text = "Court interaction failed"
-            end
-
-            return
+            task.wait(0.15)
         end
     end
 
-    Status.Text = target .. " prompt not found"
+    if found == 0 then
+        Status.Text = "No parts found in Court " .. number
+    else
+        Status.Text = "Court " .. number .. " interaction sent"
+    end
 end
 
 -- SERVER SEARCH
 
 local function getRequest()
-    return request or http_request or
-        (syn and syn.request)
+    return request or http_request or (syn and syn.request)
 end
 
 local function findDeadServer()
@@ -200,8 +247,8 @@ local function findDeadServer()
             .. "/servers/Public?sortOrder=Asc&limit=100"
 
         if cursor ~= "" then
-            url = url .. "&cursor="
-                .. HttpService:UrlEncode(cursor)
+            url = url .. "&cursor=" ..
+                HttpService:UrlEncode(cursor)
         end
 
         local success, response = pcall(function()
@@ -213,11 +260,11 @@ local function findDeadServer()
 
         if not success or not response
             or response.StatusCode ~= 200 then
+            Status.Text = "Server search failed"
             return nil
         end
 
         local data
-
         local ok = pcall(function()
             data = HttpService:JSONDecode(response.Body)
         end)
@@ -233,7 +280,6 @@ local function findDeadServer()
                 and server.playing >= 1
                 and server.playing <= 2
                 and server.playing < server.maxPlayers then
-
                 table.insert(servers, server)
             end
         end
@@ -259,7 +305,7 @@ end
 -- DEAD PARK HOPPER
 
 local function hopDeadPark()
-    if hopping or not running then
+    if hopping or closed then
         return
     end
 
@@ -274,10 +320,10 @@ local function hopDeadPark()
         return
     end
 
-    Status.Text = "Joining server with "
+    Status.Text = "Joining server: "
         .. server.playing .. " players"
 
-    local success, err = pcall(function()
+    local success = pcall(function()
         TeleportService:TeleportToPlaceInstance(
             PARK_ID,
             server.id,
@@ -300,7 +346,7 @@ local function startHopper()
     running = true
 
     task.spawn(function()
-        while running do
+        while running and not closed do
             local count = #Players:GetPlayers()
 
             if count >= HOP_AT then
@@ -337,7 +383,7 @@ end)
 
 makeButton("Joiner", "STOP AUTO", stopHopper)
 
--- 1V1 TAB
+-- 1V1
 
 makeButton("1v1", "AUTO JOIN COURT 1 (GREEN)", function()
     joinCourt(1)
@@ -347,20 +393,48 @@ makeButton("1v1", "AUTO JOIN COURT 2 (PURPLE)", function()
     joinCourt(2)
 end)
 
--- 2V2 TAB
+-- 2V2
 
-makeButton("2v2", "AUTO JOIN COURT 6", function()
-    joinCourt(6)
+for _, number in ipairs({3, 4, 5, 6}) do
+    makeButton("2v2", "AUTO JOIN COURT " .. number, function()
+        joinCourt(number)
+    end)
+end
+
+-- 3V3
+
+for _, number in ipairs({7, 8, 9}) do
+    makeButton("3v3", "AUTO JOIN COURT " .. number, function()
+        joinCourt(number)
+    end)
+end
+
+-- 4V4
+
+makeButton("4v4", "AUTO JOIN COURT 10", function()
+    joinCourt(10)
 end)
 
--- 3V3 TAB
+-- TELEPORT FAILURE HANDLER
 
-makeButton("3v3", "AUTO JOIN COURT 8", function()
-    joinCourt(8)
+TeleportService.TeleportInitFailed:Connect(function(player, result)
+    if player == LocalPlayer then
+        hopping = false
+        Status.Text = "Teleport failed: " .. tostring(result)
+    end
+end)
+
+-- CLOSE GUI
+
+Close.MouseButton1Click:Connect(function()
+    closed = true
+    running = false
+    hopping = false
+    Gui:Destroy()
 end)
 
 -- STARTUP
 
 switchTab("Joiner")
 
-print("PRACTICAL BASKETBALL ULTIMATE V2 LOADED")
+print("PRACTICAL BASKETBALL ULTIMATE V3 LOADED")
