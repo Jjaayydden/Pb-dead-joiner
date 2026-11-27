@@ -1,4 +1,4 @@
-main.lua
+
 -- Jayden's PB Joiner
 
 local Players = game:GetService("Players")
