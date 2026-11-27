@@ -1,0 +1,89 @@
+main.lua
+-- Jayden's PB Joiner
+
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local Player = Players.LocalPlayer
+
+local Modes = {
+    Plaza = 115776365257536,
+    Park = 115491614485922
+}
+
+local CoreGui = game:GetService("CoreGui")
+local Old = CoreGui:FindFirstChild("PBDeadJoiner")
+if Old then Old:Destroy() end
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "PBDeadJoiner"
+Gui.ResetOnSpawn = false
+Gui.Parent = CoreGui
+
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.fromOffset(260, 170)
+Frame.Position = UDim2.new(.5, -130, .5, -85)
+Frame.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+Frame.Parent = Gui
+
+local function Button(name, y, callback)
+    local B = Instance.new("TextButton")
+    B.Size = UDim2.new(1, -20, 0, 42)
+    B.Position = UDim2.fromOffset(10, y)
+    B.Text = name
+    B.Parent = Frame
+    B.MouseButton1Click:Connect(callback)
+end
+
+local function Join(id)
+    local req = request or http_request or (syn and syn.request)
+    if not req then
+        warn("HTTP unavailable")
+        return
+    end
+
+    local url = "https://games.roblox.com/v1/games/"
+        .. id .. "/servers/Public?sortOrder=Asc&limit=100"
+
+    local ok, res = pcall(function()
+        return req({Url = url, Method = "GET"})
+    end)
+
+    if not ok or not res or res.StatusCode ~= 200 then
+        warn("Server search failed")
+        return
+    end
+
+    local data = HttpService:JSONDecode(res.Body).data or {}
+
+    table.sort(data, function(a, b)
+        return a.playing < b.playing
+    end)
+
+    for _, server in ipairs(data) do
+        if server.id ~= game.JobId
+            and server.playing < server.maxPlayers then
+
+            TeleportService:TeleportToPlaceInstance(
+                id, server.id, Player
+            )
+            return
+        end
+    end
+
+    warn("No available servers found")
+end
+
+Button("JOIN DEAD PLAZA", 10, function()
+    Join(Modes.Plaza)
+end)
+
+Button("JOIN DEAD PARK", 60, function()
+    Join(Modes.Park)
+end)
+
+Button("CLOSE", 110, function()
+    Gui:Destroy()
+end)
+
+print("Jayden's PB Joiner loaded!")
