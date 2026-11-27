@@ -1,0 +1,65 @@
+main.lua
+
+local P = game:GetService("Players")
+local T = game:GetService("TeleportService")
+local H = game:GetService("HttpService")
+local U = P.LocalPlayer
+
+local Modes = {
+    Plaza = 115776365257536,
+    Park = 115491614485922
+}
+
+local G = Instance.new("ScreenGui")
+G.Name = "PBDeadJoiner"
+G.Parent = game:GetService("CoreGui")
+
+local F = Instance.new("Frame", G)
+F.Size = UDim2.fromOffset(260, 170)
+F.Position = UDim2.new(.5, -130, .5, -85)
+F.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+
+local function button(name, y, callback)
+    local B = Instance.new("TextButton", F)
+    B.Size = UDim2.new(1, -20, 0, 42)
+    B.Position = UDim2.fromOffset(10, y)
+    B.Text = name
+    B.MouseButton1Click:Connect(callback)
+end
+
+local function join(id)
+    local req = request or http_request or (syn and syn.request)
+    if not req then return end
+
+    local ok, res = pcall(req, {
+        Url = "https://games.roblox.com/v1/games/"
+            .. id .. "/servers/Public?sortOrder=Asc&limit=100",
+        Method = "GET"
+    })
+
+    if not ok or res.StatusCode ~= 200 then return end
+
+    local data = H:JSONDecode(res.Body).data or {}
+    table.sort(data, function(a, b)
+        return a.playing < b.playing
+    end)
+
+    for _, s in ipairs(data) do
+        if s.id ~= game.JobId and s.playing < s.maxPlayers then
+            T:TeleportToPlaceInstance(id, s.id, U)
+            return
+        end
+    end
+end
+
+button("JOIN DEAD PLAZA", 10, function()
+    join(Modes.Plaza)
+end)
+
+button("JOIN DEAD PARK", 60, function()
+    join(Modes.Park)
+end)
+
+button("CLOSE", 110, function()
+    G:Destroy()
+end)
