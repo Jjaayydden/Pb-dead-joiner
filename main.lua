@@ -1,527 +1,141 @@
 
--- PRACTICAL BASKETBALL ULTIMATE V3
--- Client-side executor
+-- JAY CLONE PB | SERVER
+-- Place in ServerScriptService
 
 local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
-local CoreGui = game:GetService("CoreGui")
-local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local LocalPlayer = Players.LocalPlayer
+local remoteFolder = ReplicatedStorage:FindFirstChild("JayClonePBRemotes")
 
-local PARK_ID = 115491614485922
-local PLAZA_ID = 115776365257536
-
-local HOP_AT = 8
-local CHECK_INTERVAL = 5
-
-local running = false
-local hopping = false
-local closed = false
-
--- REMOVE OLD GUI
-
-local oldGui = CoreGui:FindFirstChild("PBDeadJoiner")
-if oldGui then
-    oldGui:Destroy()
+if not remoteFolder then
+	remoteFolder = Instance.new("Folder")
+	remoteFolder.Name = "JayClonePBRemotes"
+	remoteFolder.Parent = ReplicatedStorage
 end
 
--- MAIN GUI
+local joinRemote = remoteFolder:FindFirstChild("JoinCourt")
+if not joinRemote then
+	joinRemote = Instance.new("RemoteEvent")
+	joinRemote.Name = "JoinCourt"
+	joinRemote.Parent = remoteFolder
+end
 
-local Gui = Instance.new("ScreenGui")
-Gui.Name = "PBDeadJoiner"
-Gui.ResetOnSpawn = false
-Gui.Parent = CoreGui
+local statusRemote = remoteFolder:FindFirstChild("Status")
+if not statusRemote then
+	statusRemote = Instance.new("RemoteEvent")
+	statusRemote.Name = "Status"
+	statusRemote.Parent = remoteFolder
+end
 
-local Frame = Instance.new("Frame")
-Frame.Size = UDim2.fromOffset(380, 450)
-Frame.Position = UDim2.new(0.5, -190, 0.5, -225)
-Frame.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
-Frame.BorderSizePixel = 0
-Frame.Parent = Gui
+local courtQueues = {}
 
-Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 12)
+local function getCourtSize(courtNumber)
+	if courtNumber <= 2 then
+		return 2 -- 1v1
+	elseif courtNumber <= 6 then
+		return 4 -- 2v2
+	elseif courtNumber <= 9 then
+		return 6 -- 3v3
+	else
+		return 8 -- 4v4
+	end
+end
 
--- TITLE
+local function getCourt(courtNumber)
+	local map = workspace:FindFirstChild("Map")
+	local courts = map and map:FindFirstChild("Courts")
 
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -50, 0, 45)
-Title.Position = UDim2.fromOffset(10, 0)
-Title.BackgroundTransparency = 1
-Title.Text = "PRACTICAL BASKETBALL"
-Title.TextColor3 = Color3.new(1, 1, 1)
-Title.TextSize = 17
-Title.Font = Enum.Font.GothamBold
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Active = true
-Title.Parent = Frame
+	return courts and courts:FindFirstChild("Court" .. courtNumber)
+end
 
--- CLOSE BUTTON
+local function findNearestSpot(player, spots)
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
 
-local Close = Instance.new("TextButton")
-Close.Size = UDim2.fromOffset(32, 32)
-Close.Position = UDim2.new(1, -38, 0, 6)
-Close.BackgroundColor3 = Color3.fromRGB(190, 55, 65)
-Close.Text = "X"
-Close.TextColor3 = Color3.new(1, 1, 1)
-Close.TextSize = 16
-Close.Font = Enum.Font.GothamBold
-Close.Parent = Frame
+	if not root then
+		return nil
+	end
 
-Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 8)
+	local nearest
+	local nearestDistance = math.huge
 
--- STATUS
+	for _, object in ipairs(spots:GetDescendants()) do
+		if object:IsA("BasePart") then
+			local distance = (root.Position - object.Position).Magnitude
 
-local Status = Instance.new("TextLabel")
-Status.Position = UDim2.fromOffset(5, 45)
-Status.Size = UDim2.new(1, -10, 0, 28)
-Status.BackgroundTransparency = 1
-Status.Text = "Ready"
-Status.TextColor3 = Color3.fromRGB(100, 220, 140)
-Status.TextSize = 12
-Status.Font = Enum.Font.Gotham
-Status.Parent = Frame
+			if distance < nearestDistance then
+				nearestDistance = distance
+				nearest = object
+			end
+		end
+	end
 
--- DRAGGABLE GUI: PC + MOBILE
+	if nearest and nearestDistance <= 12 then
+		return nearest
+	end
 
-local dragging = false
-local dragInput
-local dragStart
-local startPosition
+	return nil
+end
 
-Title.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
+joinRemote.OnServerEvent:Connect(function(player, courtNumber)
+	if typeof(courtNumber) ~= "number"
+		or courtNumber % 1 ~= 0
+		or courtNumber < 1
+		or courtNumber > 10 then
+		statusRemote:FireClient(player, "Invalid court")
+		return
+	end
 
-        dragging = true
-        dragStart = input.Position
-        startPosition = Frame.Position
+	local court = getCourt(courtNumber)
+	local spots = court and court:FindFirstChild("Spots")
 
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
+	if not spots then
+		statusRemote:FireClient(player, "Court or Spots folder not found")
+		return
+	end
+
+	if not findNearestSpot(player, spots) then
+		statusRemote:FireClient(player, "Move closer to a court spot")
+		return
+	end
+
+	courtQueues[courtNumber] = courtQueues[courtNumber] or {}
+
+	local queue = courtQueues[courtNumber]
+	local capacity = getCourtSize(courtNumber)
+
+	-- Prevent duplicate entries
+	for _, queuedPlayer in ipairs(queue) do
+		if queuedPlayer == player then
+			statusRemote:FireClient(player, "Already queued")
+			return
+		end
+	end
+
+	if #queue >= capacity then
+		statusRemote:FireClient(player, "Court queue is full")
+		return
+	end
+
+	table.insert(queue, player)
+
+	statusRemote:FireClient(
+		player,
+		"Queued for Court " .. courtNumber
+			.. " (" .. #queue .. "/" .. capacity .. ")"
+	)
+
+	print(player.Name .. " queued for Court " .. courtNumber)
 end)
 
-Title.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragInput = input
-    end
+Players.PlayerRemoving:Connect(function(player)
+	for courtNumber, queue in pairs(courtQueues) do
+		for index = #queue, 1, -1 do
+			if queue[index] == player then
+				table.remove(queue, index)
+			end
+		end
+	end
 end)
 
-local dragConnection = UserInputService.InputChanged:Connect(function(input)
-    if dragging and input == dragInput then
-        local delta = input.Position - dragStart
-
-        Frame.Position = UDim2.new(
-            startPosition.X.Scale,
-            startPosition.X.Offset + delta.X,
-            startPosition.Y.Scale,
-            startPosition.Y.Offset + delta.Y
-        )
-    end
-end)
-
--- TAB SYSTEM
-
-local TabBar = Instance.new("Frame")
-TabBar.Position = UDim2.fromOffset(10, 80)
-TabBar.Size = UDim2.new(1, -20, 0, 40)
-TabBar.BackgroundTransparency = 1
-TabBar.Parent = Frame
-
-local TabLayout = Instance.new("UIListLayout")
-TabLayout.FillDirection = Enum.FillDirection.Horizontal
-TabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-TabLayout.Padding = UDim.new(0, 5)
-TabLayout.Parent = TabBar
-
-local Pages = {}
-local Tabs = {}
-
-local function createPage(name)
-    local Page = Instance.new("Frame")
-    Page.Name = name
-    Page.Position = UDim2.fromOffset(10, 130)
-    Page.Size = UDim2.new(1, -20, 1, -140)
-    Page.BackgroundTransparency = 1
-    Page.Visible = false
-    Page.Parent = Frame
-
-    local Layout = Instance.new("UIListLayout")
-    Layout.Padding = UDim.new(0, 9)
-    Layout.SortOrder = Enum.SortOrder.LayoutOrder
-    Layout.Parent = Page
-
-    Pages[name] = Page
-end
-
-local function switchTab(name)
-    for pageName, Page in pairs(Pages) do
-        Page.Visible = pageName == name
-    end
-
-    for tabName, Button in pairs(Tabs) do
-        Button.BackgroundColor3 =
-            tabName == name
-            and Color3.fromRGB(45, 100, 190)
-            or Color3.fromRGB(42, 44, 55)
-    end
-end
-
-local function createTab(name)
-    local Button = Instance.new("TextButton")
-    Button.Size = UDim2.new(0, 65, 1, 0)
-    Button.BackgroundColor3 = Color3.fromRGB(42, 44, 55)
-    Button.Text = name
-    Button.TextColor3 = Color3.new(1, 1, 1)
-    Button.TextSize = 11
-    Button.Font = Enum.Font.GothamBold
-    Button.Parent = TabBar
-
-    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 7)
-
-    Tabs[name] = Button
-
-    Button.MouseButton1Click:Connect(function()
-        switchTab(name)
-    end)
-end
-
-for _, name in ipairs({
-    "Joiner", "1v1", "2v2", "3v3", "4v4"
-}) do
-    createPage(name)
-    createTab(name)
-end
-
--- BUTTON CREATOR
-
-local function makeButton(pageName, label, callback)
-    local Button = Instance.new("TextButton")
-    Button.Size = UDim2.new(1, 0, 0, 45)
-    Button.BackgroundColor3 = Color3.fromRGB(45, 90, 170)
-    Button.Text = label
-    Button.TextColor3 = Color3.new(1, 1, 1)
-    Button.TextSize = 13
-    Button.Font = Enum.Font.GothamBold
-    Button.Parent = Pages[pageName]
-
-    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 8)
-
-    Button.MouseButton1Click:Connect(function()
-        if not closed then
-            callback()
-        end
-    end)
-end
-
--- CHARACTER LOADER
-
-local function getCharacterRoot()
-    local character = LocalPlayer.Character
-
-    if not character then
-        character = LocalPlayer.CharacterAdded:Wait()
-    end
-
-    local root = character:FindFirstChild("HumanoidRootPart")
-
-    if not root then
-        root = character:WaitForChild("HumanoidRootPart", 15)
-    end
-
-    return root
-end
-
--- COURT JOINER
-
-local function joinCourt(number)
-    Status.Text = "Loading character..."
-
-    local root = getCharacterRoot()
-
-    if not root then
-        Status.Text = "Character failed to load"
-        return
-    end
-
-    local map = workspace:FindFirstChild("Map")
-    local courts = map and map:FindFirstChild("Courts")
-
-    if not courts then
-        Status.Text = "Court folder not found"
-        return
-    end
-
-    local court = courts:FindFirstChild("Court" .. number)
-
-    if not court then
-        Status.Text = "Court " .. number .. " not found"
-        return
-    end
-
-    local spots = court:FindFirstChild("Spots")
-
-    if not spots then
-        Status.Text = "Court spots not found"
-        return
-    end
-
-    if typeof(firetouchinterest) ~= "function" then
-        Status.Text = "Touch support unavailable"
-        return
-    end
-
-    local found = 0
-
-    for _, spot in ipairs(spots:GetDescendants()) do
-        if spot:IsA("BasePart") then
-            found += 1
-
-            local success = pcall(function()
-                firetouchinterest(root, spot, 0)
-                task.wait(0.15)
-                firetouchinterest(root, spot, 1)
-            end)
-
-            if not success then
-                Status.Text = "Pad interaction failed"
-                return
-            end
-
-            task.wait(0.2)
-        end
-    end
-
-    if found == 0 then
-        Status.Text = "No pads found in Court " .. number
-    else
-        Status.Text = "Court " .. number .. " pads checked"
-    end
-end
-
--- SERVER SEARCH
-
-local function getRequest()
-    return request or http_request or (syn and syn.request)
-end
-
-local function findDeadServer()
-    local req = getRequest()
-
-    if not req then
-        Status.Text = "HTTP unavailable"
-        return nil
-    end
-
-    local cursor = ""
-
-    for page = 1, 5 do
-        local url =
-            "https://games.roblox.com/v1/games/"
-            .. PARK_ID
-            .. "/servers/Public?sortOrder=Asc&limit=100"
-
-        if cursor ~= "" then
-            url = url .. "&cursor=" ..
-                HttpService:UrlEncode(cursor)
-        end
-
-        local success, response = pcall(function()
-            return req({
-                Url = url,
-                Method = "GET"
-            })
-        end)
-
-        if not success or not response
-            or response.StatusCode ~= 200 then
-            Status.Text = "Server search failed"
-            return nil
-        end
-
-        local data
-
-        local ok = pcall(function()
-            data = HttpService:JSONDecode(response.Body)
-        end)
-
-        if not ok or not data.data then
-            Status.Text = "Server data unavailable"
-            return nil
-        end
-
-        local servers = {}
-
-        for _, server in ipairs(data.data) do
-            if server.id ~= game.JobId
-                and server.playing >= 1
-                and server.playing <= 2
-                and server.playing < server.maxPlayers then
-
-                table.insert(servers, server)
-            end
-        end
-
-        if #servers > 0 then
-            table.sort(servers, function(a, b)
-                return a.playing < b.playing
-            end)
-
-            return servers[1]
-        end
-
-        cursor = data.nextPageCursor or ""
-
-        if cursor == "" then
-            break
-        end
-    end
-
-    return nil
-end
-
--- DEAD PARK HOPPER
-
-local function hopDeadPark()
-    if hopping or closed then
-        return
-    end
-
-    hopping = true
-    Status.Text = "Searching for dead Park..."
-
-    local server = findDeadServer()
-
-    if not server then
-        hopping = false
-        Status.Text = "No dead Park found"
-        return
-    end
-
-    Status.Text = "Joining server: "
-        .. server.playing .. " players"
-
-    local success = pcall(function()
-        TeleportService:TeleportToPlaceInstance(
-            PARK_ID,
-            server.id,
-            LocalPlayer
-        )
-    end)
-
-    if not success then
-        hopping = false
-        Status.Text = "Teleport failed"
-    end
-end
-
-local function startHopper()
-    if running then
-        Status.Text = "Hopper already running"
-        return
-    end
-
-    running = true
-
-    task.spawn(function()
-        while running and not closed do
-            local count = #Players:GetPlayers()
-
-            if count >= HOP_AT then
-                Status.Text = "8 players reached! Hopping..."
-                hopDeadPark()
-                task.wait(10)
-            else
-                Status.Text = "Park players: " .. count
-                task.wait(CHECK_INTERVAL)
-            end
-        end
-    end)
-
-    hopDeadPark()
-end
-
-local function stopHopper()
-    running = false
-    hopping = false
-    Status.Text = "Hopper stopped"
-end
-
--- JOINER TAB
-
-makeButton("Joiner", "START DEAD PARK HOPPER", startHopper)
-
-makeButton("Joiner", "JOIN DEAD PARK (1-2 PLAYERS)", function()
-    hopDeadPark()
-end)
-
-makeButton("Joiner", "JOIN PLAZA", function()
-    TeleportService:Teleport(PLAZA_ID, LocalPlayer)
-end)
-
-makeButton("Joiner", "STOP AUTO", stopHopper)
-
--- 1V1: COURTS 1 AND 2
-
-for _, number in ipairs({1, 2}) do
-    makeButton("1v1", "AUTO JOIN COURT " .. number, function()
-        joinCourt(number)
-    end)
-end
-
--- 2V2: COURTS 3, 4, 5, 6
-
-for _, number in ipairs({3, 4, 5, 6}) do
-    makeButton("2v2", "AUTO JOIN COURT " .. number, function()
-        joinCourt(number)
-    end)
-end
-
--- 3V3: COURTS 7, 8, 9
-
-for _, number in ipairs({7, 8, 9}) do
-    makeButton("3v3", "AUTO JOIN COURT " .. number, function()
-        joinCourt(number)
-    end)
-end
-
--- 4V4: COURT 10
-
-makeButton("4v4", "AUTO JOIN COURT 10", function()
-    joinCourt(10)
-end)
-
--- TELEPORT FAILURE
-
-TeleportService.TeleportInitFailed:Connect(function(player, result)
-    if player == LocalPlayer and not closed then
-        hopping = false
-        Status.Text = "Teleport failed: " .. tostring(result)
-    end
-end)
-
--- CLOSE GUI
-
-Close.MouseButton1Click:Connect(function()
-    closed = true
-    running = false
-    hopping = false
-
-    if dragConnection then
-        dragConnection:Disconnect()
-    end
-
-    Gui:Destroy()
-end)
-
--- STARTUP
-
-switchTab("Joiner")
-
-print("PRACTICAL BASKETBALL ULTIMATE V3 LOADED")
+print("JAY CLONE PB SERVER READY")
