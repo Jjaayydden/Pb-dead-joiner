@@ -1,11 +1,12 @@
 
--- Roblox Luau | Client-side executor
 -- PRACTICAL BASKETBALL ULTIMATE V3
+-- Client-side executor
 
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -19,12 +20,14 @@ local running = false
 local hopping = false
 local closed = false
 
+-- REMOVE OLD GUI
+
 local oldGui = CoreGui:FindFirstChild("PBDeadJoiner")
 if oldGui then
     oldGui:Destroy()
 end
 
--- GUI
+-- MAIN GUI
 
 local Gui = Instance.new("ScreenGui")
 Gui.Name = "PBDeadJoiner"
@@ -35,18 +38,23 @@ local Frame = Instance.new("Frame")
 Frame.Size = UDim2.fromOffset(380, 450)
 Frame.Position = UDim2.new(0.5, -190, 0.5, -225)
 Frame.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
+Frame.BorderSizePixel = 0
 Frame.Parent = Gui
 
 Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 12)
 
+-- TITLE
+
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -45, 0, 45)
+Title.Size = UDim2.new(1, -50, 0, 45)
 Title.Position = UDim2.fromOffset(10, 0)
 Title.BackgroundTransparency = 1
 Title.Text = "PRACTICAL BASKETBALL"
 Title.TextColor3 = Color3.new(1, 1, 1)
 Title.TextSize = 17
 Title.Font = Enum.Font.GothamBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Active = true
 Title.Parent = Frame
 
 -- CLOSE BUTTON
@@ -63,6 +71,8 @@ Close.Parent = Frame
 
 Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 8)
 
+-- STATUS
+
 local Status = Instance.new("TextLabel")
 Status.Position = UDim2.fromOffset(5, 45)
 Status.Size = UDim2.new(1, -10, 0, 28)
@@ -73,7 +83,50 @@ Status.TextSize = 12
 Status.Font = Enum.Font.Gotham
 Status.Parent = Frame
 
--- TABS
+-- DRAGGABLE GUI: PC + MOBILE
+
+local dragging = false
+local dragInput
+local dragStart
+local startPosition
+
+Title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        dragging = true
+        dragStart = input.Position
+        startPosition = Frame.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+Title.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+local dragConnection = UserInputService.InputChanged:Connect(function(input)
+    if dragging and input == dragInput then
+        local delta = input.Position - dragStart
+
+        Frame.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- TAB SYSTEM
 
 local TabBar = Instance.new("Frame")
 TabBar.Position = UDim2.fromOffset(10, 80)
@@ -133,6 +186,7 @@ local function createTab(name)
     Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 7)
 
     Tabs[name] = Button
+
     Button.MouseButton1Click:Connect(function()
         switchTab(name)
     end)
@@ -159,14 +213,45 @@ local function makeButton(pageName, label, callback)
 
     Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 8)
 
-    Button.MouseButton1Click:Connect(callback)
+    Button.MouseButton1Click:Connect(function()
+        if not closed then
+            callback()
+        end
+    end)
+end
+
+-- CHARACTER LOADER
+
+local function getCharacterRoot()
+    local character = LocalPlayer.Character
+
+    if not character then
+        character = LocalPlayer.CharacterAdded:Wait()
+    end
+
+    local root = character:FindFirstChild("HumanoidRootPart")
+
+    if not root then
+        root = character:WaitForChild("HumanoidRootPart", 15)
+    end
+
+    return root
 end
 
 -- COURT JOINER
 
 local function joinCourt(number)
-    local courts = workspace:FindFirstChild("Map")
-        and workspace.Map:FindFirstChild("Courts")
+    Status.Text = "Loading character..."
+
+    local root = getCharacterRoot()
+
+    if not root then
+        Status.Text = "Character failed to load"
+        return
+    end
+
+    local map = workspace:FindFirstChild("Map")
+    local courts = map and map:FindFirstChild("Courts")
 
     if not courts then
         Status.Text = "Court folder not found"
@@ -183,44 +268,40 @@ local function joinCourt(number)
     local spots = court:FindFirstChild("Spots")
 
     if not spots then
-        Status.Text = "Court " .. number .. ": Spots missing"
+        Status.Text = "Court spots not found"
         return
     end
 
     if typeof(firetouchinterest) ~= "function" then
-        Status.Text = "Executor touch support unavailable"
-        return
-    end
-
-    local character = LocalPlayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-
-    if not root then
-        Status.Text = "Character not loaded"
+        Status.Text = "Touch support unavailable"
         return
     end
 
     local found = 0
-    Status.Text = "Interacting with Court " .. number
 
     for _, spot in ipairs(spots:GetDescendants()) do
         if spot:IsA("BasePart") then
             found += 1
 
-            pcall(function()
+            local success = pcall(function()
                 firetouchinterest(root, spot, 0)
-                task.wait(0.1)
+                task.wait(0.15)
                 firetouchinterest(root, spot, 1)
             end)
 
-            task.wait(0.15)
+            if not success then
+                Status.Text = "Pad interaction failed"
+                return
+            end
+
+            task.wait(0.2)
         end
     end
 
     if found == 0 then
-        Status.Text = "No parts found in Court " .. number
+        Status.Text = "No pads found in Court " .. number
     else
-        Status.Text = "Court " .. number .. " interaction sent"
+        Status.Text = "Court " .. number .. " pads checked"
     end
 end
 
@@ -265,11 +346,13 @@ local function findDeadServer()
         end
 
         local data
+
         local ok = pcall(function()
             data = HttpService:JSONDecode(response.Body)
         end)
 
         if not ok or not data.data then
+            Status.Text = "Server data unavailable"
             return nil
         end
 
@@ -280,6 +363,7 @@ local function findDeadServer()
                 and server.playing >= 1
                 and server.playing <= 2
                 and server.playing < server.maxPlayers then
+
                 table.insert(servers, server)
             end
         end
@@ -383,17 +467,15 @@ end)
 
 makeButton("Joiner", "STOP AUTO", stopHopper)
 
--- 1V1
+-- 1V1: COURTS 1 AND 2
 
-makeButton("1v1", "AUTO JOIN COURT 1 (GREEN)", function()
-    joinCourt(1)
-end)
+for _, number in ipairs({1, 2}) do
+    makeButton("1v1", "AUTO JOIN COURT " .. number, function()
+        joinCourt(number)
+    end)
+end
 
-makeButton("1v1", "AUTO JOIN COURT 2 (PURPLE)", function()
-    joinCourt(2)
-end)
-
--- 2V2
+-- 2V2: COURTS 3, 4, 5, 6
 
 for _, number in ipairs({3, 4, 5, 6}) do
     makeButton("2v2", "AUTO JOIN COURT " .. number, function()
@@ -401,7 +483,7 @@ for _, number in ipairs({3, 4, 5, 6}) do
     end)
 end
 
--- 3V3
+-- 3V3: COURTS 7, 8, 9
 
 for _, number in ipairs({7, 8, 9}) do
     makeButton("3v3", "AUTO JOIN COURT " .. number, function()
@@ -409,16 +491,16 @@ for _, number in ipairs({7, 8, 9}) do
     end)
 end
 
--- 4V4
+-- 4V4: COURT 10
 
 makeButton("4v4", "AUTO JOIN COURT 10", function()
     joinCourt(10)
 end)
 
--- TELEPORT FAILURE HANDLER
+-- TELEPORT FAILURE
 
 TeleportService.TeleportInitFailed:Connect(function(player, result)
-    if player == LocalPlayer then
+    if player == LocalPlayer and not closed then
         hopping = false
         Status.Text = "Teleport failed: " .. tostring(result)
     end
@@ -430,6 +512,11 @@ Close.MouseButton1Click:Connect(function()
     closed = true
     running = false
     hopping = false
+
+    if dragConnection then
+        dragConnection:Disconnect()
+    end
+
     Gui:Destroy()
 end)
 
